@@ -62,6 +62,7 @@
       height: 100%;
       display: block;
       filter: contrast(1.15) brightness(0.95);
+      touch-action: none;
     }
   </style>
 </head>
@@ -76,10 +77,12 @@
     let width = (canvas.width = window.innerWidth);
     let height = (canvas.height = window.innerHeight);
 
-    window.addEventListener('resize', () => {
+    function resize() {
       width = canvas.width = window.innerWidth;
       height = canvas.height = window.innerHeight;
-    });
+    }
+    window.addEventListener('resize', resize);
+    window.addEventListener('orientationchange', resize);
 
     // Audio Nodes (Pure Sine + Space Echo / Reverb)
     let audioCtx = null;
@@ -121,79 +124,103 @@
     }
 
     function initAudio() {
-      if (audioCtx) {
-        if (audioCtx.state === 'suspended') audioCtx.resume();
-        return;
+      try {
+        if (audioCtx) {
+          if (audioCtx.state === 'suspended') {
+            audioCtx.resume().catch(() => {});
+          }
+          return;
+        }
+
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) return;
+
+        audioCtx = new AudioContextClass();
+
+        mainOsc = audioCtx.createOscillator();
+        subOsc = audioCtx.createOscillator();
+        subGain = audioCtx.createGain();
+        filterNode = audioCtx.createBiquadFilter();
+        masterGain = audioCtx.createGain();
+
+        // Dual-tap primitive tape reverb / echo network
+        delayNode1 = audioCtx.createDelay(1.0);
+        delayNode2 = audioCtx.createDelay(1.0);
+        fb1 = audioCtx.createGain();
+        fb2 = audioCtx.createGain();
+        reverbGain = audioCtx.createGain();
+
+        delayNode1.delayTime.value = 0.27;
+        delayNode2.delayTime.value = 0.43;
+        fb1.gain.value = 0.42;
+        fb2.gain.value = 0.38;
+        reverbGain.gain.value = 0.38;
+
+        mainOsc.type = 'sine';
+        mainOsc.frequency.value = 220;
+
+        subOsc.type = 'sine';
+        subOsc.frequency.value = 330;
+        subGain.gain.value = 0;
+
+        filterNode.type = 'lowpass';
+        filterNode.frequency.value = 1800;
+
+        masterGain.gain.value = 0;
+
+        mainOsc.connect(filterNode);
+        subOsc.connect(subGain);
+        subGain.connect(filterNode);
+
+        filterNode.connect(masterGain);
+        masterGain.connect(audioCtx.destination);
+
+        masterGain.connect(delayNode1);
+        delayNode1.connect(fb1);
+        fb1.connect(delayNode2);
+        delayNode2.connect(fb2);
+        fb2.connect(delayNode1);
+
+        delayNode1.connect(reverbGain);
+        delayNode2.connect(reverbGain);
+        reverbGain.connect(audioCtx.destination);
+
+        mainOsc.start();
+        subOsc.start();
+
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume().catch(() => {});
+        }
+      } catch (err) {
+        console.warn('Audio init:', err);
       }
-
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      audioCtx = new AudioContextClass();
-
-      mainOsc = audioCtx.createOscillator();
-      subOsc = audioCtx.createOscillator();
-      subGain = audioCtx.createGain();
-      filterNode = audioCtx.createBiquadFilter();
-      masterGain = audioCtx.createGain();
-
-      // Dual-tap primitive tape reverb / echo network
-      delayNode1 = audioCtx.createDelay(1.0);
-      delayNode2 = audioCtx.createDelay(1.0);
-      fb1 = audioCtx.createGain();
-      fb2 = audioCtx.createGain();
-      reverbGain = audioCtx.createGain();
-
-      delayNode1.delayTime.value = 0.27;
-      delayNode2.delayTime.value = 0.43;
-      fb1.gain.value = 0.42;
-      fb2.gain.value = 0.38;
-      reverbGain.gain.value = 0.38;
-
-      mainOsc.type = 'sine';
-      mainOsc.frequency.value = 220;
-
-      // Subtle second harmonic sine that wakes up only when stars orbit
-      subOsc.type = 'sine';
-      subOsc.frequency.value = 330;
-      subGain.gain.value = 0;
-
-      filterNode.type = 'lowpass';
-      filterNode.frequency.value = 1800;
-
-      masterGain.gain.value = 0;
-
-      // Signal chain
-      mainOsc.connect(filterNode);
-      subOsc.connect(subGain);
-      subGain.connect(filterNode);
-
-      filterNode.connect(masterGain);
-      masterGain.connect(audioCtx.destination);
-
-      // Cross-coupled delay reverb
-      masterGain.connect(delayNode1);
-      delayNode1.connect(fb1);
-      fb1.connect(delayNode2);
-      delayNode2.connect(fb2);
-      fb2.connect(delayNode1);
-
-      delayNode1.connect(reverbGain);
-      delayNode2.connect(reverbGain);
-      reverbGain.connect(audioCtx.destination);
-
-      mainOsc.start();
-      subOsc.start();
     }
 
-    function onDown(x, y) {
-      initAudio();
+    function getCoords(e) {
+      const rect = canvas.getBoundingClientRect();
+      const cx = (e.clientX !== undefined) ? e.clientX : (e.touches && e.touches[0] ? e.touches[0].clientX : pointerX);
+      const cy = (e.clientY !== undefined) ? e.clientY : (e.touches && e.touches[0] ? e.touches[0].clientY : pointerY);
+      return {
+        x: Math.max(0, Math.min(width, cx - rect.left)),
+        y: Math.max(0, Math.min(height, cy - rect.top))
+      };
+    }
+
+    function onDown(e) {
+      const p = getCoords(e);
       isActive = true;
-      pointerX = x;
-      pointerY = y;
+      pointerX = p.x;
+      pointerY = p.y;
+      initAudio();
     }
 
-    function onMove(x, y) {
-      pointerX = x;
-      pointerY = y;
+    function onMove(e) {
+      const p = getCoords(e);
+      pointerX = p.x;
+      pointerY = p.y;
+      if (isActive && audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+      }
     }
 
     function onUp() {
@@ -207,22 +234,38 @@
       });
     }
 
-    canvas.addEventListener('mousedown', (e) => onDown(e.clientX, e.clientY));
-    window.addEventListener('mousemove', (e) => onMove(e.clientX, e.clientY));
-    window.addEventListener('mouseup', onUp);
-    window.addEventListener('mouseleave', onUp);
+    // Unified Pointer Events (standard for cross-origin iframes)
+    if (window.PointerEvent) {
+      canvas.addEventListener('pointerdown', (e) => {
+        try { canvas.setPointerCapture(e.pointerId); } catch(err){}
+        onDown(e);
+      });
+      canvas.addEventListener('pointermove', onMove);
+      canvas.addEventListener('pointerup', (e) => {
+        try { canvas.releasePointerCapture(e.pointerId); } catch(err){}
+        onUp();
+      });
+      canvas.addEventListener('pointercancel', onUp);
+    } else {
+      canvas.addEventListener('mousedown', onDown);
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
 
-    canvas.addEventListener('touchstart', (e) => {
-      e.preventDefault();
-      onDown(e.touches[0].clientX, e.touches[0].clientY);
-    }, { passive: false });
+      canvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        onDown(e);
+      }, { passive: false });
+      canvas.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        onMove(e);
+      }, { passive: false });
+      window.addEventListener('touchend', onUp);
+    }
 
-    canvas.addEventListener('touchmove', (e) => {
-      e.preventDefault();
-      onMove(e.touches[0].clientX, e.touches[0].clientY);
-    }, { passive: false });
-
-    canvas.addEventListener('touchend', onUp);
+    // Secondary user-gesture unlock for AudioContext
+    window.addEventListener('click', () => {
+      initAudio();
+    });
 
     let frame = 0;
 
@@ -333,24 +376,26 @@
       const finalFreq = Math.max(55, baseFreq + orbitalBend);
 
       if (audioCtx) {
-        const now = audioCtx.currentTime;
-        mainOsc.frequency.setTargetAtTime(finalFreq, now, 0.03);
+        try {
+          const now = audioCtx.currentTime;
+          mainOsc.frequency.setTargetAtTime(finalFreq, now, 0.03);
 
-        const subFreq = finalFreq * 1.498 - orbitalBend * 0.5;
-        subOsc.frequency.setTargetAtTime(Math.max(55, subFreq), now, 0.04);
+          const subFreq = finalFreq * 1.498 - orbitalBend * 0.5;
+          subOsc.frequency.setTargetAtTime(Math.max(55, subFreq), now, 0.04);
 
-        if (isActive) {
-          const baseVol = 0.06 + normY * 0.28;
-          const tremolo = 1 + Math.tanh(ampModSum) * 0.28;
-          const finalVol = Math.min(0.42, Math.max(0.03, baseVol * tremolo));
-          masterGain.gain.setTargetAtTime(finalVol, now, 0.04);
+          if (isActive) {
+            const baseVol = 0.06 + normY * 0.28;
+            const tremolo = 1 + Math.tanh(ampModSum) * 0.28;
+            const finalVol = Math.min(0.42, Math.max(0.03, baseVol * tremolo));
+            masterGain.gain.setTargetAtTime(finalVol, now, 0.04);
 
-          const subLevel = Math.min(0.18, orbitCount * 0.032) * (0.5 + 0.5 * Math.sin(frame * 0.05));
-          subGain.gain.setTargetAtTime(subLevel, now, 0.06);
-        } else {
-          masterGain.gain.setTargetAtTime(0, now, 0.08);
-          subGain.gain.setTargetAtTime(0, now, 0.08);
-        }
+            const subLevel = Math.min(0.18, orbitCount * 0.032) * (0.5 + 0.5 * Math.sin(frame * 0.05));
+            subGain.gain.setTargetAtTime(subLevel, now, 0.06);
+          } else {
+            masterGain.gain.setTargetAtTime(0, now, 0.08);
+            subGain.gain.setTargetAtTime(0, now, 0.08);
+          }
+        } catch(e) {}
       }
 
       const px = Math.round(smoothX);
