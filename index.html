@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>TA1WAV</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #040604;
+      touch-action: none;
+      cursor: crosshair;
+    }
+
+    /* Old CRT Curvature, Scanlines & Heavy Vignette */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background:
+        repeating-linear-gradient(
+          0deg,
+          rgba(0, 0, 0, 0.38) 0px,
+          rgba(0, 0, 0, 0.38) 1px,
+          transparent 1px,
+          transparent 3px
+        ),
+        radial-gradient(
+          circle at 50% 50%,
+          transparent 48%,
+          rgba(0, 0, 0, 0.55) 78%,
+          rgba(0, 0, 0, 0.92) 100%
+        );
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    /* Subtle CRT Screen Frame */
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 6px;
+      border: 1px solid rgba(110, 165, 110, 0.22);
+      pointer-events: none;
+      z-index: 11;
+    }
+
+    #canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      filter: contrast(1.15) brightness(0.95);
+    }
+  </style>
+</head>
+<body>
+
+  <canvas id="canvas"></canvas>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    let width = (canvas.width = window.innerWidth);
+    let height = (canvas.height = window.innerHeight);
+
+    window.addEventListener('resize', () => {
+      width = canvas.width = window.innerWidth;
+      height = canvas.height = window.innerHeight;
+    });
+
+    // Audio Nodes (Pure Sine + Space Echo / Reverb)
+    let audioCtx = null;
+    let mainOsc = null;
+    let subOsc = null;
+    let subGain = null;
+    let filterNode = null;
+    let masterGain = null;
+    let delayNode1 = null;
+    let delayNode2 = null;
+    let fb1 = null;
+    let fb2 = null;
+    let reverbGain = null;
+
+    let isActive = false;
+    let pointerX = width * 0.5;
+    let pointerY = height * 0.5;
+    let smoothX = pointerX;
+    let smoothY = pointerY;
+
+    // Sparse, primitive stars
+    const STAR_COUNT = 26;
+    const CAPTURE_RADIUS = 165;
+    const RELEASE_RADIUS = 235;
+    const stars = [];
+
+    for (let i = 0; i < STAR_COUNT; i++) {
+      stars.push({
+        x: Math.random() * width,
+        y: Math.random() * height,
+        vx: (Math.random() - 0.5) * 0.25,
+        vy: (Math.random() - 0.5) * 0.25,
+        inOrbit: false,
+        angle: Math.random() * Math.PI * 2,
+        orbitR: 35 + Math.random() * 95,
+        speed: (0.018 + Math.random() * 0.032) * (Math.random() < 0.25 ? -1 : 1),
+        weight: 0.6 + Math.random() * 0.8
+      });
+    }
+
+    function initAudio() {
+      if (audioCtx) {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        return;
+      }
+
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new AudioContextClass();
+
+      mainOsc = audioCtx.createOscillator();
+      subOsc = audioCtx.createOscillator();
+      subGain = audioCtx.createGain();
+      filterNode = audioCtx.createBiquadFilter();
+      masterGain = audioCtx.createGain();
+
+      // Dual-tap primitive tape reverb / echo network
+      delayNode1 = audioCtx.createDelay(1.0);
+      delayNode2 = audioCtx.createDelay(1.0);
+      fb1 = audioCtx.createGain();
+      fb2 = audioCtx.createGain();
+      reverbGain = audioCtx.createGain();
+
+      delayNode1.delayTime.value = 0.27;
+      delayNode2.delayTime.value = 0.43;
+      fb1.gain.value = 0.42;
+      fb2.gain.value = 0.38;
+      reverbGain.gain.value = 0.38;
+
+      mainOsc.type = 'sine';
+      mainOsc.frequency.value = 220;
+
+      // Subtle second harmonic sine that wakes up only when stars orbit
+      subOsc.type = 'sine';
+      subOsc.frequency.value = 330;
+      subGain.gain.value = 0;
+
+      filterNode.type = 'lowpass';
+      filterNode.frequency.value = 1800;
+
+      masterGain.gain.value = 0;
+
+      // Signal chain
+      mainOsc.connect(filterNode);
+      subOsc.connect(subGain);
+      subGain.connect(filterNode);
+
+      filterNode.connect(masterGain);
+      masterGain.connect(audioCtx.destination);
+
+      // Cross-coupled delay reverb
+      masterGain.connect(delayNode1);
+      delayNode1.connect(fb1);
+      fb1.connect(delayNode2);
+      delayNode2.connect(fb2);
+      fb2.connect(delayNode1);
+
+      delayNode1.connect(reverbGain);
+      delayNode2.connect(reverbGain);
+      reverbGain.connect(audioCtx.destination);
+
+      mainOsc.start();
+      subOsc.start();
+    }
+
+    function onDown(x, y) {
+      initAudio();
+      isActive = true;
+      pointerX = x;
+      pointerY = y;
+    }
+
+    function onMove(x, y) {
+      pointerX = x;
+      pointerY = y;
+    }
+
+    function onUp() {
+      isActive = false;
+      stars.forEach((s) => {
+        if (s.inOrbit) {
+          s.inOrbit = false;
+          s.vx = -Math.sin(s.angle) * s.speed * s.orbitR * 0.12;
+          s.vy = Math.cos(s.angle) * s.speed * s.orbitR * 0.12;
+        }
+      });
+    }
+
+    canvas.addEventListener('mousedown', (e) => onDown(e.clientX, e.clientY));
+    window.addEventListener('mousemove', (e) => onMove(e.clientX, e.clientY));
+    window.addEventListener('mouseup', onUp);
+    window.addEventListener('mouseleave', onUp);
+
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      onDown(e.touches[0].clientX, e.touches[0].clientY);
+    }, { passive: false });
+
+    canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      onMove(e.touches[0].clientX, e.touches[0].clientY);
+    }, { passive: false });
+
+    canvas.addEventListener('touchend', onUp);
+
+    let frame = 0;
+
+    function loop() {
+      requestAnimationFrame(loop);
+      frame++;
+
+      smoothX += (pointerX - smoothX) * 0.16;
+      smoothY += (pointerY - smoothY) * 0.16;
+
+      // Phosphor persistence decay (primitive CRT ghosting)
+      ctx.fillStyle = 'rgba(4, 6, 4, 0.24)';
+      ctx.fillRect(0, 0, width, height);
+
+      // Occasional subtle CRT horizontal sync jitter line
+      if (Math.random() < 0.08) {
+        const jy = Math.random() * height;
+        ctx.fillStyle = 'rgba(110, 175, 110, 0.03)';
+        ctx.fillRect(0, jy, width, 1);
+      }
+
+      // Faint primitive axis crosshairs on screen center
+      ctx.strokeStyle = 'rgba(90, 140, 90, 0.08)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, height * 0.5);
+      ctx.lineTo(width, height * 0.5);
+      ctx.moveTo(width * 0.5, 0);
+      ctx.lineTo(width * 0.5, height);
+      ctx.stroke();
+
+      let orbitCount = 0;
+      let freqModSum = 0;
+      let ampModSum = 0;
+
+      // Update & Draw Stars
+      for (let i = 0; i < STAR_COUNT; i++) {
+        const s = stars[i];
+        const dx = s.x - smoothX;
+        const dy = s.y - smoothY;
+        const dist = Math.hypot(dx, dy);
+
+        if (isActive) {
+          if (!s.inOrbit && dist < CAPTURE_RADIUS && orbitCount < 7) {
+            s.inOrbit = true;
+            s.orbitR = Math.max(28, Math.min(130, dist));
+            s.angle = Math.atan2(dy, dx);
+          } else if (s.inOrbit && dist > RELEASE_RADIUS) {
+            s.inOrbit = false;
+          }
+        }
+
+        if (s.inOrbit && isActive) {
+          orbitCount++;
+          const angularStep = s.speed * (75 / s.orbitR);
+          s.angle += angularStep;
+
+          const targetX = smoothX + Math.cos(s.angle) * s.orbitR;
+          const targetY = smoothY + Math.sin(s.angle) * s.orbitR;
+
+          s.x += (targetX - s.x) * 0.25;
+          s.y += (targetY - s.y) * 0.25;
+
+          const radialPull = (1 - s.orbitR / 150);
+          freqModSum += Math.sin(s.angle) * (8 + radialPull * 18) * s.weight;
+          ampModSum += Math.cos(s.angle) * 0.15 * s.weight;
+
+          ctx.strokeStyle = 'rgba(110, 175, 110, 0.16)';
+          ctx.beginPath();
+          ctx.moveTo(smoothX, smoothY);
+          ctx.lineTo(s.x, s.y);
+          ctx.stroke();
+
+          const pulse = (Math.sin(s.angle) + 1) * 0.5;
+          ctx.strokeStyle = `rgba(160, 235, 160, ${0.55 + pulse * 0.45})`;
+          ctx.beginPath();
+          ctx.moveTo(s.x - 4, s.y);
+          ctx.lineTo(s.x + 4, s.y);
+          ctx.moveTo(s.x, s.y - 4);
+          ctx.lineTo(s.x, s.y + 4);
+          ctx.stroke();
+        } else {
+          s.x += s.vx;
+          s.y += s.vy;
+
+          s.vx *= 0.992;
+          s.vy *= 0.992;
+          if (Math.hypot(s.vx, s.vy) < 0.12) {
+            s.vx += (Math.random() - 0.5) * 0.04;
+            s.vy += (Math.random() - 0.5) * 0.04;
+          }
+
+          if (s.x < 0) s.x = width;
+          if (s.x > width) s.x = 0;
+          if (s.y < 0) s.y = height;
+          if (s.y > height) s.y = 0;
+
+          ctx.fillStyle = 'rgba(115, 170, 115, 0.48)';
+          ctx.fillRect(Math.round(s.x), Math.round(s.y), 2, 2);
+        }
+      }
+
+      const normX = Math.max(0, Math.min(1, smoothX / width));
+      const normY = Math.max(0, Math.min(1, 1 - smoothY / height));
+
+      const baseFreq = 90 + Math.pow(normX, 1.5) * 790;
+      const orbitalBend = Math.tanh(freqModSum / 45) * 65;
+      const finalFreq = Math.max(55, baseFreq + orbitalBend);
+
+      if (audioCtx) {
+        const now = audioCtx.currentTime;
+        mainOsc.frequency.setTargetAtTime(finalFreq, now, 0.03);
+
+        const subFreq = finalFreq * 1.498 - orbitalBend * 0.5;
+        subOsc.frequency.setTargetAtTime(Math.max(55, subFreq), now, 0.04);
+
+        if (isActive) {
+          const baseVol = 0.06 + normY * 0.28;
+          const tremolo = 1 + Math.tanh(ampModSum) * 0.28;
+          const finalVol = Math.min(0.42, Math.max(0.03, baseVol * tremolo));
+          masterGain.gain.setTargetAtTime(finalVol, now, 0.04);
+
+          const subLevel = Math.min(0.18, orbitCount * 0.032) * (0.5 + 0.5 * Math.sin(frame * 0.05));
+          subGain.gain.setTargetAtTime(subLevel, now, 0.06);
+        } else {
+          masterGain.gain.setTargetAtTime(0, now, 0.08);
+          subGain.gain.setTargetAtTime(0, now, 0.08);
+        }
+      }
+
+      const px = Math.round(smoothX);
+      const py = Math.round(smoothY);
+
+      if (isActive) {
+        const wellR = 12 + normY * 18 + Math.sin(frame * 0.12) * 2 + orbitCount * 3;
+        ctx.strokeStyle = 'rgba(145, 220, 145, 0.65)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        const segs = 16;
+        for (let k = 0; k <= segs; k++) {
+          const a = (k / segs) * Math.PI * 2;
+          const rx = px + Math.cos(a) * wellR;
+          const ry = py + Math.sin(a) * wellR;
+          if (k === 0) ctx.moveTo(rx, ry);
+          else ctx.lineTo(rx, ry);
+        }
+        ctx.stroke();
+
+        ctx.strokeStyle = 'rgba(100, 160, 100, 0.12)';
+        ctx.beginPath();
+        for (let k = 0; k < 24; k += 2) {
+          const a1 = (k / 24) * Math.PI * 2 + frame * 0.004;
+          const a2 = ((k + 1) / 24) * Math.PI * 2 + frame * 0.004;
+          ctx.moveTo(px + Math.cos(a1) * CAPTURE_RADIUS, py + Math.sin(a1) * CAPTURE_RADIUS);
+          ctx.lineTo(px + Math.cos(a2) * CAPTURE_RADIUS, py + Math.sin(a2) * CAPTURE_RADIUS);
+        }
+        ctx.stroke();
+      }
+
+      ctx.strokeStyle = isActive ? 'rgba(170, 245, 170, 0.9)' : 'rgba(110, 165, 110, 0.45)';
+      ctx.beginPath();
+      ctx.moveTo(px - 7, py);
+      ctx.lineTo(px + 7, py);
+      ctx.moveTo(px, py - 7);
+      ctx.lineTo(px, py + 7);
+      ctx.stroke();
+    }
+
+    loop();
+  </script>
+</body>
+</html>
