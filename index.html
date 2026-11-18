@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>TA1WAV // RF-AV THEREMIN</title>
+  <title>TA1WAV Theremin</title>
   <style>
     * {
       box-sizing: border-box;
@@ -247,20 +247,6 @@
       }
     }
 
-    /* Top HUD */
-    .hud-header {
-      position: absolute;
-      top: 14px;
-      left: 18px;
-      z-index: 5;
-      font-size: 11px;
-      letter-spacing: 1.5px;
-      color: rgba(122, 184, 122, 0.75);
-      text-shadow: 0 0 5px rgba(110, 175, 110, 0.35);
-      pointer-events: none;
-      line-height: 1.4;
-    }
-
     /* Dynamic Canvas (takes over when JS is active) */
     #canvas {
       position: absolute;
@@ -275,13 +261,7 @@
 </head>
 <body>
 
-  <a href="https://atillakaank.github.io/ta1wav-theremin/" target="_blank" id="crt-link" class="crt-link" title="TA1WAV Interactive Theremin">
-
-    <!-- TOP VINTAGE HUD -->
-    <div class="hud-header">
-      TA1WAV // ASIMETISM<br/>
-      RF-AV OSCILLOSCOPE [ORBIT]
-    </div>
+  <a href="https://atillakaank.github.io/ta1wav-theremin/" target="_blank" id="crt-link" class="crt-link" title="TA1WAV Theremin — Click to Play">
 
     <!-- PURE CSS VECTOR ANIMATION (Runs 100% in QRZ.com Sandboxed Iframe) -->
     <div id="css-system" class="css-system">
@@ -311,8 +291,8 @@
       <!-- Center Action Prompt -->
       <div class="crt-prompt" id="crt-prompt">
         <div class="prompt-box">
-          ⏵ INTERACTIVE THEREMIN // TA1WAV
-          <span class="prompt-sub">* SES VE OYNATMAK İÇİN TIKLAYIN *</span>
+          TA1WAV Theremin
+          <span class="prompt-sub">CLICK TO PLAY</span>
         </div>
       </div>
     </div>
